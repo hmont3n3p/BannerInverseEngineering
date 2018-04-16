@@ -1,0 +1,192 @@
+#
+# Script: formcalls.shl
+#
+# Purpose: Recursively find all forms which are called by the given form,
+#    showing the list of all forms, a pruned tree of called forms, and
+#    the complete list of forms with their subforms, including access
+#    switches (query only, etc.).  Banner specific.  (All forms and
+#    subforms must be in or linked in the $BANNER_LINKS directory.)
+#
+# Usage: formcalls.shl $BANNER_LINKS/<formname>.fmb
+#
+# Author: Stephen Rea <srea1957@maristream.com>
+#    Maristream, Inc.
+#
+# History:
+#    9/22/99: Original Version.
+#    9/23/99: List by form name instead of by form filename.  Show usage
+#             instructions if form pathname not given, or, check to see
+#             if the given form pathname exists.  Add dashes to the forms
+#             tree branches.
+#    9/24/99: Add forms titles to the list of called forms.  Remove the
+#             given form name from the list of called forms.
+#    9/27/99: Add forms titles to the forms tree and the complete list
+#             of forms.
+#    9/30/99: Add forms titles to the subform lines of the complete list
+#             of forms.
+#    3/13/01: Check for forms title on second line after (for Banner 4)
+#             or on first line after (for Banner 3) MAIN_WINDOW line.
+#    5/10/02: Also check for forms title on third line after MAIN_WINDOW
+#             line (for Banner 5).
+#    5/10/02: Split export command into two commands for other unix versions.
+#
+# Check to see if a form pathname was given (else show usage instructions)
+# and if the file exists.
+#
+if [ $# -eq 0 ] ; then
+echo
+echo "formcalls.shl: Recursive listing of forms called by the given form."
+echo
+echo "Usage: formcalls.shl \$BANNER_LINKS/<formname>.fmb"
+echo
+exit
+fi
+if [ $# -eq 1 -a ! -a $1 ] ; then
+echo
+echo The file $1 does not exist.
+echo
+exit
+fi
+#
+# Initialize on first call, which will have just one (formname) parameter.
+# (Subsequent calls (recursions) will have a second parameter with the call
+# level number and a third parameter with the spacing for the forms tree.)
+#
+if [ $# -lt 2 ] ; then
+rm formcalls.lst fcna.out fctitle.out fctitles.out 2>/dev/null
+echo $1 | sed 's/.*\/\([^\/]*\)$/\1/' >fcall.out
+fc=1; export fc
+fct=---; export fct
+#
+# Increment the spacing for the recursion on the second and subsequent calls.
+#
+else
+fc=`expr $2`; export fc
+if [ $2 -eq 9 ] ; then
+fct=$3--; export fct
+else
+fct=$3---; export fct
+fi
+fi
+if [ -a $1 ] ; then
+#
+# Find the title of the form by searching for the line(s) after a MAIN_WINDOW
+# line and containing the string "Form".
+#
+strings $1 | fold -w 2040 | grep -v '^ *--' >fcstrings.out
+grep -n MAIN_WINDOW fcstrings.out | sed 's/:.*//' | sed "s/.*/expr & + 3/" | sh | sed "s/.*/sed -n '&p' fcstrings.out | head -1/" | sh | grep Form | head -1 >fctitle.out
+if [ -z "`cat fctitle.out`" ]
+then grep -n MAIN_WINDOW fcstrings.out | sed 's/:.*//' | sed "s/.*/expr & + 2/" | sh | sed "s/.*/sed -n '&p' fcstrings.out | head -1/" | sh | grep Form | head -1 >fctitle.out
+fi
+if [ -z "`cat fctitle.out`" ]
+then grep -n MAIN_WINDOW fcstrings.out | sed 's/:.*//' | sed "s/.*/expr & + 1/" | sh | sed "s/.*/sed -n '&p' fcstrings.out | head -1/" | sh | grep Form | head -1 >fctitle.out
+fi
+cat fctitle.out | sed 's/^/   /' | sed "s/^/`echo $1 | sed 's/.*\/\([^\/]*\)$/\1/' | sed 's/\..*//' | tr 'a-z' 'A-Z'`/" >>fctitles.out
+if [ $# -lt 2 ] ; then
+echo
+echo $1 `cat fctitles.out | sed 's/[^ ]* *\(.*\)$/(\1)/' | sed 's/( *)//'`
+echo All forms/subforms called \(recursive\):
+fi
+#
+# Append the form and title to the forms tree.
+#
+if [ $# -lt 2 ] ; then
+echo `echo $1 | sed 's/.*\/\([^\/]*\)$/\1/' | sed 's/\..*//' | tr 'a-z' 'A-Z'` `cat fctitles.out | sed 's/[^ ]* *\(.*\)$/(\1)/' | sed 's/( *)//'` | sed 's/ (/       (/' >fctree.out
+else
+echo $2$3`echo $1 | sed 's/.*\/\([^\/]*\)$/\1/' | sed 's/\..*//' | tr 'a-z' 'A-Z'` `tail -1 fctitles.out | sed 's/[^ ]* *\(.*\)$/(\1)/' | sed 's/( *)//'` | sed 's/ (/      (/' >>fctree.out
+fi
+#
+# Find the forms called by the form call routine, along with the form access
+# parameter, if any.  Show only specified form calls, not variable form calls.
+#
+cat fcstrings.out | tr 'a-z' 'A-Z' | grep 'FORM_CALL *(' | grep ", *'.*' *, *'.*'" | sed "s/^[^,]*, *'//" | sed "s/ *, *' *'.*//" | sed "s/ *, *'\([A-Z_]*\)'.*/   (\1)/" | sed "s/'//g" | sort | uniq >fc0.out
+#
+# Append the list of forms called and their access parameter to the output
+# file, if any were found.
+#
+if [ -s "fc0.out" ] ; then
+echo >>formcalls.lst
+echo $1 `tail -1 fctitles.out | sed 's/[^ ]* *\(.*\)$/(\1)/' | sed 's/( *)//'` >>formcalls.lst
+echo '   Forms Called:' >>formcalls.lst
+cat fc0.out | sed 's/^/      /' >>formcalls.lst
+#
+# Get the list of called form .fmb file names.
+#
+cut -d' ' -f1 fc0.out | tr 'A-Z' 'a-z' | sort | uniq | sed 's/$/\.fmb/' >fcthis.out
+#
+# Merge the previously-found forms with this list of forms to create a batch
+# file that runs formcalls.shl just on forms which haven't been checked yet.
+#
+cat fcall.out fcthis.out | sort | uniq | sed 's/^/# /' >fc0.out
+sed 's/^/# /' fcall.out >fc0all.out
+join -j 2 -a 1 -o 2.1 1.2 -e 'formcalls.shl' fc0.out fc0all.out | sed 's/ / $BANNER_LINKS\//' | sed "s/$/ `expr $fc + 1` `env fct`/" >fcall`env fc`.shl
+#
+# Update the previously-found forms list and run the newly created batch file.
+#
+cut -d' ' -f2 fc0.out >fcall.out
+rm fcthis.out fc0.out fc0all.out
+sh fcall`env fc`.shl
+rm fcall`env fc`.shl
+fi
+#
+# When the recursion has unwound to the original call, output the resulting
+# forms list, the forms tree, and all of the forms calls cross references.
+#
+if [ $# -lt 2 ] ; then
+#
+# Join the "not available" list to the "all forms called" list.
+#
+if [ -a fcna.out ] ; then
+sort fcna.out | sed 's/$/ (n\/a)/' >fc0na.out
+join -a 1 -o 1.1 2.2 fcall.out fc0na.out | sed 's/ *$//' >fc0.out
+mv fc0.out fcall.out
+rm fcna.out fc0na.out
+fi
+#
+# Add the upper-case form name to the beginning of the "all forms called"
+# list lines.
+#
+cut -d. -f1 fcall.out | tr 'a-z' 'A-Z' >fc0.out
+paste -d' ' fc0.out fcall.out | sed 's/ \([^ ]*\)/   (\1)/' >fc0c.out
+mv fc0c.out fcall.out
+#
+# Add the forms titles to the "all forms called" list, putting the titles
+# at the end of the list lines.
+#
+sed 's/ *$//' fcall.out | newform -l30 -a >fc0.out
+mv fc0.out fcall.out
+sed 's/\([^ ]*\)  *\(.*\)/sed "s~^\1\\(.*\\)~\1\\1   \2~" fcall.out >fc0.out; mv fc0.out fcall.out/' fctitles.out | sh
+sed 's/ *$//' fcall.out >fc0.out
+mv fc0.out fcall.out
+#
+# Add the forms titles to the subforms of the complete list of forms,
+# putting the titles at the end of the subform lines.
+#
+sed 's/ *$//' formcalls.lst | newform -l30 -a >fc0.out
+mv fc0.out formcalls.lst
+sed 's/\([^ ]*\)  *\(.*\)/sed "s~^      \1\\(.*\\)~      \1\\1   (\2)~" formcalls.lst >fc0.out; mv fc0.out formcalls.lst/' fctitles.out | sh
+sed 's/ *$//' formcalls.lst >fc0.out
+mv fc0.out formcalls.lst
+#
+# Uncomment the following two lines to remove dashes from forms tree.
+# sed 's/-/ /g' fctree.out >fc0.out
+# mv fc0.out fctree.out
+#
+echo >fc0.out
+echo $1 `head -1 fctitles.out | sed 's/[^ ]* *\(.*\)$/(\1)/' | sed 's/( *)//'` >>fc0.out
+echo All forms/subforms called \(recursive\): >>fc0.out
+cat fcall.out | sed "/`echo $1 | sed 's/.*\/\([^\/]*\)$/\1/'`/d" >>fc0.out
+echo >>fc0.out
+echo Forms calling tree \(only new subforms shown\): >>fc0.out
+cat fctree.out >>fc0.out
+echo >>fc0.out
+echo All subforms called by these forms: >>fc0.out
+sed '1d' formcalls.lst >>fc0.out
+mv fc0.out formcalls.lst
+sed '1,3d' formcalls.lst
+rm fctitle.out fctitles.out fcstrings.out fctree.out 2>/dev/null
+fi
+else
+echo The file $1 does not exist.
+echo $1 | sed 's/.*\/\([^\/]*\)$/\1/' >>fcna.out
+fi

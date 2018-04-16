@@ -1,0 +1,104 @@
+#
+# Script: progtables.shl
+#
+# Purpose: Show which tables are updated by the given Pro-C (*.pc) or
+#    Pro-COBOL (*.pco) program, and how they are used (Update, Insert,
+#    Delete).  (Note: Since selects can be from multiple tables which
+#    can span multiple lines in the program, those aren't checked by
+#    this script.)
+#
+# Usage: progtables.shl $BANNER_HOME/<product>/c/<progname>.pc
+#    or: progtables.shl $BANNER_LINKS/<progname>.pc
+#
+#    To run this for all Pro-C (or Pro-COBOL) programs in a directory, you
+#    could use the "find" command, such as in the following (which must be
+#    all on one line):
+#
+#    find $BANNER_HOME/general/c -name '*.pc' -exec progtables.shl {} \;
+#       >progtables.general      -- use this to save results to a file
+#
+# Note: You must change the /home/dba_scripts directory in the "export ftdir"
+#    command below to wherever you have generated the formtables.tables file,
+#    which is built using my formtables.sql script while logged in as SYS or
+#    SYSTEM or as a DBA user.
+#
+# Author: Stephen Rea <srea1957@maristream.com>
+#    Maristream, Inc.
+#
+# History:
+#    10/12/00: Original version.
+#    5/10/02: Split export command into two commands for other unix versions.
+#
+ftdir=/home/dba_scripts; export ftdir
+#
+# Check to see if a program pathname was given (else show usage instructions)
+# and if the file exists.
+#
+if [ $# -eq 0 ] ; then
+echo
+echo "List of tables updated by a program (.pc or .pco) and their usage."
+echo
+echo "Usage: progtables.shl \$BANNER_HOME/<product>/c/<progname>.pc"
+echo "   or: progtables.shl \$BANNER_LINKS/<progname>.pc"
+echo
+exit
+fi
+if [ ! -a $1 ] ; then
+echo
+echo The program file $1 does not exist.
+echo
+exit
+fi
+#
+# See if the list of non-system tables is available.
+#
+if [ ! -a $ftdir/formtables.tables -o ! -s $ftdir/formtables.tables ] ; then
+echo Tables list \(formtables.tables\) not created or is empty.  Aborting script.
+exit
+fi
+#
+# Find the UPDATE tables, with the single table name following the UPDATE
+# string.
+#
+egrep -i '(update  *)' $1 | sed 's/.*://' | tr '[a-z]' '[A-Z]' |
+  sed 's/.*UPDATE *//' |
+  sort -u | sed 's/ *//g' | comm -12 - $ftdir/formtables.tables |
+  sed 's/$/   U _ _/' >ptu.out
+#
+# Find the INSERT INTO tables, with the single table name following the
+# INSERT INTO string.
+#
+egrep -i '(insert  *into)' $1 | sed 's/.*://' | tr '[a-z]' '[A-Z]' |
+  sed 's/.*INSERT *INTO *//' |
+  sort -u | sed 's/ *//g' | comm -12 - $ftdir/formtables.tables |
+  sed 's/$/   _ I _/' >pti.out
+#
+# Find the DELETE FROM tables, with the single table name following the
+# DELETE FROM or DELETE string.
+#
+egrep -i '(delete  *from|delete  *)' $1 | sed 's/.*://' | tr '[a-z]' '[A-Z]' |
+  sed 's/.*DELETE *FROM *//' | sed 's/.*DELETE *//' |
+  sort -u | sed 's/ *//g' | comm -12 - $ftdir/formtables.tables |
+  sed 's/$/   _ _ D/' >ptd.out
+#
+# Merge the lists, combining the U, I, and D columns.
+#
+cat ptu.out pti.out ptd.out | cut -d' ' -f1 | sort | uniq | sed 's/$/   _ _ _/' >ptall.out
+join -a 1 -o 1.1 2.2 1.3 1.4 -e '_' ptall.out ptu.out >pt0u.out
+join -a 1 -o 1.1 1.2 2.3 1.4 -e '_' pt0u.out pti.out >pt0ui.out
+join -a 1 -o 1.1 1.2 1.3 2.4 -e '_' pt0ui.out ptd.out >pt0uid.out
+sed 's/^\( *[^ ]*\) /\1   /' pt0uid.out | sed 's/ *$//' >pt.out
+rm ptu.out pti.out ptd.out pt0u.out pt0ui.out pt0uid.out ptall.out
+#
+# Output the results.
+#
+echo
+echo $1
+if [ -s "pt.out" ]
+then
+  echo '   Tables updated (Update, Insert, Delete):'
+  cat pt.out | sed 's/^/      /'
+else
+  echo '   No tables updated in this program.'
+fi
+chmod 777 pt.out

@@ -1,0 +1,32 @@
+#
+# Script: foctables.shl
+#
+# Purpose: Find the tables in all of the Focus programs (*.fex) in the current
+#    directory.  This can be used, for example, to get the list of tables to
+#    put into a default role for the Oracle user.
+#
+# Note: You must change the /home/dba_scripts directory in the "export ftdir"
+#    command below to wherever you have generated the formtables.tables file,
+#    which is built using my formtables.sql script while logged in as SYS or
+#    SYSTEM or as a DBA user.
+#
+# Usage: foctables.shl
+#
+# Author: Stephen Rea <srea1957@maristream.com>
+#    Maristream, Inc.
+#
+# History:
+#    11/09/00: Original version.
+#    10/12/01: Check for the existence of the formtables.tables file.
+#    5/10/02: Split export command into two commands for other unix versions.
+#
+ftdir=/home/dba_scripts; export ftdir
+#
+if [ ! -a $ftdir/formtables.tables -o ! -s $ftdir/formtables.tables ] ; then
+echo Tables list \(formtables.tables\) not created or is empty.  Aborting script.
+exit
+fi
+#
+egrep -i '(define *file|table *file)' *.fex | sed 's/.*://' |
+  tr '[a-z]' '[A-Z]' | sed 's/.*DEFINE *FILE *//' | sed 's/.*TABLE *FILE *//' |
+  sort -u | sed 's/ *//g' | comm -12 - $ftdir/formtables.tables

@@ -1,0 +1,61 @@
+#
+# Script: formgrep.shl
+#
+# Purpose: Show the lines in an Oracle forms (.fmb) file containing a
+#    given string.  The first parameter is the name of the forms file, 
+#    the second parameter is the string to search for, and the optional
+#    third parameter is the number of lines to show before and after the
+#    matched line.  Note that this third parameter, if greater than zero,
+#    slows down the script substantially.  Specifying -1 for the third
+#    parameter just shows the file name, if it contains matches.
+#
+# Usage: formgrep.shl $BANNER_LINKS/<formname>.fmb shrcomc 
+#    or: formgrep.shl $BANNER_LINKS/<formname>.fmb shrcomc 2
+#      (In this example, shrcomc is the string to search for, and 2 is the
+#      number of surrounding lines to also show.)
+#
+#    To run this for all forms in a directory, you could use the "find"
+#    command, such as in the following (which must be all on one line):
+#
+#    find $BANNER_LINKS -name '*.fmb' -exec formgrep.shl {} shrcomc \;
+#       >formgrep.lst           -- use this to save results to a file
+#
+# Author: Stephen Rea <srea1957@maristream.com>
+#    Maristream, Inc.
+#
+# History:
+#    11/09/00: Original version.
+#    08/22/01: Added optional third parameter to indicate the number of
+#       lines to show before and after the matched line.
+#    5/10/02: Split export command into two commands for other unix versions.
+#
+if [ $# = 3 ]; then
+nlines=$3; export nlines
+else
+nlines=0; export nlines
+fi
+if [ $nlines -gt 0 ]; then
+echo "1,`expr $nlines`s/.*/>> &/" >formgrep.sed
+echo "`expr $nlines + 1`s/.*/-- &/" >>formgrep.sed
+echo "`expr $nlines + 2`,`expr $nlines + $nlines + 1`s/.*/<< &/" >>formgrep.sed
+echo '1i\' >>formgrep.sed
+echo >>formgrep.sed
+fi
+strings $1 | fold -w 2040 >formgrep.tmp
+if [ `grep -i $2 formgrep.tmp | wc -l` -gt 0 ]; then
+if [ $nlines -gt 0 ]; then
+echo
+echo $1:
+grep -in $2 formgrep.tmp | sed 's/\([0-9]*\).*/head -`expr \1 + $nlines` formgrep.tmp | tail -`expr $nlines + $nlines + 1` | sed -f formgrep.sed/' | sh
+elif [ $nlines -eq 0 ]; then
+echo
+echo $1:
+grep -i $2 formgrep.tmp
+else
+echo $1
+fi
+fi
+rm formgrep.tmp
+if [ $nlines -gt 0 ]; then
+rm formgrep.sed
+fi

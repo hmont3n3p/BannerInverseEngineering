@@ -1,0 +1,193 @@
+#
+# Script: collector.shl
+#
+# Purpose: Show which collector tables are used by the given form, and how
+#    they are used (Select or List of values (LOV) select, Update, Insert,
+#    Delete, or undetermined).  If the given form does not use collector
+#    tables, don't show anything for this form (so that you can run it on
+#    all forms in a directory and only list the forms that use collector
+#    tables).  This parsing of the strings in the .fmb file is a best guess
+#    effort, and may not find some table references.  Also, it does not go
+#    into library files for embedded references there or check triggers for
+#    side effects of table changes.  Collector tables are Banner-specific;
+#    however, you can put any list of tables into the collector.tables file
+#    and use this script to find the forms that use that list of tables.
+#
+# Usage: collector.shl $BANNER_HOME/<product>/forms/<formname>.fmb
+#    or: collector.shl $BANNER_LINKS/<formname>.fmb
+#
+#    To run this for all forms in a directory, you could use the "find"
+#    command, such as in the following (which must be all on one line):
+#
+#    find $BANNER_HOME/general/forms -name '*.fmb' -exec collector.shl {} \;
+#       >collector.general      -- use this to save results to a file
+#
+# Note: You must have already run collector.sql to build the list of tables
+#    to match (collector.tables).  If the tables list does not exist, it
+#    will first log you in to sqlplus and run collector.sql for you.
+#
+# Author: Stephen Rea <srea1957@maristream.com>
+#    Maristream, Inc.
+#
+# History:
+#    8/21/01: Original Version based on 3/13/01 revision of formtables.shl.
+#    5/10/02: Also check for forms title on third line after MAIN_WINDOW
+#             line (for Banner 5).
+#    5/10/02: Split export command into two commands for other unix versions.
+#
+ftsuidbtn=n; export ftsuidbtn
+#
+# Check to see if a form pathname was given (else show usage instructions)
+# and if the file exists.
+#
+if [ $# -eq 0 ] ; then
+echo
+echo "collector.shl: Forms cross reference of collector tables and their usage."
+echo
+echo "Usage: collector.shl \$BANNER_HOME/<product>/forms/<formname>.fmb"
+echo "   or: collector.shl \$BANNER_LINKS/<formname>.fmb"
+echo
+echo "To run collector.shl on an entire directory of forms:"
+echo "  find \$BANNER_HOME/<product>/forms -name '*.fmb' -exec collector.shl {} \\;"
+echo
+exit
+fi
+if [ ! -a $1 ] ; then
+echo
+echo The file $1 does not exist.
+echo
+exit
+fi
+#
+# Get the list of non-system tables, if not already available.
+#
+if [ ! -a collector.tables -o ! -s collector.tables ] ; then
+echo
+echo Creating tables list. Please log in as SYS or SYSTEM or as a DBA user...
+echo "Enter user-name: \c"; read UID
+echo "Enter password: \c"; stty -echo; read PSWD; stty echo; echo
+sqlplus -silent $UID/$PSWD @collector.sql >/dev/null
+if [ ! -a collector.tables -o ! -s collector.tables ] ; then
+echo Tables list \(collector.tables\) not created or is empty.  Aborting script.
+exit
+fi
+fi
+#
+# Get the strings in the given form and find the title of the form by
+# searching for the line(s) after a MAIN_WINDOW line and containing
+# the string "Form".
+#
+strings $1 | fold -w 2040 | grep -v '^ *--' >ft0.out
+grep -n MAIN_WINDOW ft0.out | sed 's/:.*//' | sed "s/.*/expr & + 3/" | sh | sed "s/.*/sed -n '&p' ft0.out | head -1/" | sh | grep Form | head -1 | sed 's/.*/(&)/' | sed 's/( *)//' >ftt.out
+if [ -z "`cat ftt.out`" ]
+then grep -n MAIN_WINDOW ft0.out | sed 's/:.*//' | sed "s/.*/expr & + 2/" | sh | sed "s/.*/sed -n '&p' ft0.out | head -1/" | sh | grep Form | head -1 | sed 's/.*/(&)/' | sed 's/( *)//' >ftt.out
+fi
+if [ -z "`cat ftt.out`" ]
+then grep -n MAIN_WINDOW ft0.out | sed 's/:.*//' | sed "s/.*/expr & + 1/" | sh | sed "s/.*/sed -n '&p' ft0.out | head -1/" | sh | grep Form | head -1 | sed 's/.*/(&)/' | sed 's/( *)//' >ftt.out
+fi
+cat ft0.out | tr 'a-z' 'A-Z' >ftstrings.out
+#
+# Find the SELECT tables, with one or more table names (separated by commas
+# and possibly with aliases) following the FROM clause and before the WHERE,
+# GROUP, and ORDER clauses, if present.  Exclude DELETE FROM lines.
+#
+grep 'FROM ' ftstrings.out | grep -v 'DELETE *FROM ' | sed 's/^.*FROM *//' | sed 's/ *WHERE.*$//' | sed 's/ *GROUP .*$//' | sed 's/ *ORDER .*$//' | sed 's/ *;.*$//' | tr ',' '\012' | sed 's/^ *//' | sed 's/ .*$//' | grep -v '^ *$' | sort | uniq | sed 's/$/   S _ _ _/' >ft0.out
+join ft0.out collector.tables >fts.out
+#
+# Find the UPDATE tables, with the single table name following the UPDATE
+# string.
+#
+grep 'UPDATE ' ftstrings.out | sed 's/^ *//g' | grep '^UPDATE' | cut -d' ' -f2 | grep -v '^ *$' | sort | uniq | sed 's/$/   _ U _ _/' >ft0.out
+join ft0.out collector.tables >ftu.out
+#
+# Find the INSERT INTO tables, with the single table name following the
+# INSERT INTO string.
+#
+grep 'INSERT *INTO' ftstrings.out | sed 's/^ *//g' | grep '^INSERT' | sed 's/(/ /g' | cut -d' ' -f3 | grep -v '^ *$' | sort | uniq | sed 's/$/   _ _ I _/' >ft0.out
+join ft0.out collector.tables >fti.out
+#
+# Find the DELETE FROM tables, with the single table name following the
+# DELETE FROM string.
+#
+grep 'DELETE *FROM' ftstrings.out | sed 's/^ *//g' | grep '^DELETE' | sed 's/ *;.*$//' | cut -d' ' -f3 | grep -v '^ *$' | sort | uniq | sed 's/$/   _ _ _ D/' >ft0.out
+join ft0.out collector.tables >ftd.out
+#
+# Find List of values select tables consisting of the table name followed
+# by _LOV or _RG (record group) at the beginning of the strings (Banner
+# specific).
+#
+grep '^[A-Z]' ftstrings.out | cut -d' ' -f1 | egrep '(_LOV$|_RG$)' | sed 's/_LOV$//' | sed 's/_RG$//' | sort | uniq | sed 's/$/   L _ _ _/' >ft0.out
+join ft0.out collector.tables >ftl.out
+#
+# Find any other tables at the beginning of the strings for which their
+# usage can't be determined from the above (may include the form's base
+# table).
+#
+grep '^[A-Z]' ftstrings.out | cut -d' ' -f1 | sort | uniq | sed 's/$/   _ _ _ _/' >ft0.out
+join ft0.out collector.tables >ftx.out
+#
+# Get the full list of Select, Update, Insert, Delete and undetermined tables.
+#
+cat fts.out ftu.out fti.out ftd.out ftl.out ftx.out | cut -d' ' -f1 | sort | uniq | sed 's/$/   _ _ _ _/' >ftall.out
+#
+# Find save button tables consisting of the table name at the beginning
+# followed by _SAVE_BTN at the end of the first word of the strings, and
+# optionally append those tables to the Select, Update, Insert, and Delete
+# files (assuming all four uses for them), but only for those tables that
+# have already been found above (Banner specific).
+#
+grep '^[A-Z]' ftstrings.out | cut -d' ' -f1 | grep '_SAVE_BTN$' | sed 's/_.*//' | sort | uniq | sed 's/$/   S U I D (Save Btn)/' >ft0.out
+join -o 1.1 1.2 1.3 1.4 1.5 1.6 1.7 ft0.out ftall.out >ftsave.out
+if [ "$ftsuidbtn" = "y" ] ; then
+cat fts.out ftsave.out | cut -d' ' -f1 | sort | uniq | sed 's/$/   S U I D/' >ft0.out
+join -a 1 -o 1.1 1.2 2.3 2.4 2.5 -e '_' ft0.out ftsave.out >fts.out
+cat ftu.out ftsave.out | cut -d' ' -f1 | sort | uniq | sed 's/$/   S U I D/' >ft0.out
+join -a 1 -o 1.1 2.2 1.3 2.4 2.5 -e '_' ft0.out ftsave.out >ftu.out
+cat fti.out ftsave.out | cut -d' ' -f1 | sort | uniq | sed 's/$/   S U I D/' >ft0.out
+join -a 1 -o 1.1 2.2 2.3 1.4 2.5 -e '_' ft0.out ftsave.out >fti.out
+cat ftd.out ftsave.out | cut -d' ' -f1 | sort | uniq | sed 's/$/   S U I D/' >ft0.out
+join -a 1 -o 1.1 2.2 2.3 2.4 1.5 -e '_' ft0.out ftsave.out >ftd.out
+fi
+#
+# Find exit button tables consisting of the table name at the beginning
+# followed by _EXIT_BTN at the end of the first word of the strings, and
+# optionally append those tables to the Select file (assuming that use
+# for them), but only for those tables that have already been found above
+# (Banner specific).
+#
+grep '^[A-Z]' ftstrings.out | cut -d' ' -f1 | grep '_EXIT_BTN$' | sed 's/_.*//' | sort | uniq | sed 's/$/   S _ _ _ (Exit Btn)/' >ft0.out
+join -o 1.1 1.2 1.3 1.4 1.5 1.6 1.7 ft0.out ftall.out >ftexit.out
+if [ "$ftsuidbtn" = "y" ] ; then
+cat fts.out ftexit.out | cut -d' ' -f1 | sort | uniq | sed 's/$/   S _ _ _/' >ft0.out
+cp ft0.out fts.out
+fi
+#
+# Merge the save and exit button lists, with save taking precedence.
+#
+cat ftsave.out ftexit.out | cut -d' ' -f1 | sort | uniq | sed 's/$/   S _ _ _/' >ft0.out
+join -a 1 -o 1.1 1.2 2.3 2.4 2.5 -e '_' ft0.out ftsave.out | sed 's/S U I D/  S U I D (Save Btn)/' | sed 's/S _ _ _/  S _ _ _ (Exit Btn)/' >ftbtn.out
+#
+# Merge the lists, combining the S (or L), U, I, D columns.
+#
+cat fts.out ftl.out | cut -d' ' -f1 | sort | uniq | sed 's/$/   _ _ _ _/' >ft0sl.out
+join -a 1 -o 1.1 2.2 1.3 1.4 1.5 -e 'L' ft0sl.out fts.out >ftsl.out
+join -a 1 -o 1.1 2.2 1.3 1.4 1.5 -e '_' ftall.out ftsl.out >ft0s.out
+join -a 1 -o 1.1 1.2 2.3 1.4 1.5 -e '_' ft0s.out ftu.out >ft0su.out
+join -a 1 -o 1.1 1.2 1.3 2.4 1.5 -e '_' ft0su.out fti.out >ft0sui.out
+join -a 1 -o 1.1 1.2 1.3 1.4 2.5 -e '_' ft0sui.out ftd.out >ft0suid.out
+join -a 1 -o 1.1 1.2 1.3 1.4 1.5 2.6 2.7 ft0suid.out ftbtn.out >ft0suidb.out
+sed 's/^\( *[^ ]*\) /\1   /' ft0suidb.out | sed 's/ *$//' >ft.out
+rm ftall.out ft0.out ft0sl.out ft0s.out ft0su.out ft0sui.out ft0suid.out ft0suidb.out
+rm fts.out ftu.out fti.out ftd.out ftl.out ftx.out ftsl.out ftsave.out ftexit.out ftbtn.out
+# chmod 777 fts.out ftu.out fti.out ftd.out ftl.out ftx.out ftsl.out ftsave.out ftexit.out ftbtn.out
+if [ -s "ft.out" ]
+then
+  echo
+  echo $1 `cat ftt.out`
+  echo '   Collector Tables Referenced (Select/LOV, Update, Insert, Delete):'
+  cat ft.out | sed 's/^/      /'
+fi
+#
+rm ftstrings.out
+chmod 777 ft.out ftt.out
+# rm ft.out ftt.out
